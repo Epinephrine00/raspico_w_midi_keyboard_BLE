@@ -23,26 +23,24 @@ bt = bluetooth.BLE()
 conn_handle = None
 midi_handle = None
 
+octab = 0
+
 def sendNote(channel, note, velocity):
     global bt, conn_handle, midi_handle, timestamp
     if not isConnected: return
-    timestamp = (timestamp + 1) & 0x1FFF # 타임스탬프 롤오버 방지
+    timestamp = (timestamp + 1) & 0x1FFF
     status = 0x90 | (channel & 0x0f) if velocity > 0 else 0x80 | (channel & 0x0f)
     txdata = bytearray([0x80 | (timestamp >> 7), 0x80 | (timestamp & 0x7f), status, note, velocity])
     bt.gatts_notify(conn_handle, midi_handle, txdata)
-    print("send", txdata)
 
 def sendCC(channel, number, value):
-    global bt
-    global conn_handle
-    global midi_handle
-    global timestamp
-
-    timestamp += 1
-    status = 0xb0 | (channel & 0x0f)  # CC
+    global bt, conn_handle, midi_handle, timestamp
+    if not isConnected: return
+    timestamp = (timestamp + 1) & 0x1FFF
+    status = 0xb0 | (channel & 0x0f)
     txdata = bytearray([0x80 | (timestamp >> 7), 0x80 | (timestamp & 0x7f), status, number, value])
     bt.gatts_notify(conn_handle, midi_handle, txdata)
-    print("send", txdata)
+    print("Sent CC:", txdata)
 
 def parseMidiData(data):
     print("parse", data)
@@ -91,19 +89,52 @@ def isrBt(event, data):
         rxdata = bt.gatts_read(value_handle)
         parseMidiData(rxdata)
 
+def function_button_0_action():
+    print("Function Button 0 (GPIO 10) Pressed!")
+
+def function_button_1_action():
+    print("Function Button 1 (GPIO 11) Pressed!")
+
+def function_button_2_action():
+    print("Function Button 2 (GPIO 12) Pressed!")
+
+def function_button_3_action():
+    print("Function Button 3 (GPIO 13) Pressed!")
+
+def function_button_4_action():
+    print("Function Button 4 (GPIO 14) Pressed!")
+
+def function_button_5_action():
+    print("Function Button 5 (GPIO 15) Pressed!")
+
+def function_button_6_action():
+    global octab
+    octab = -5 if octab==-5 else octab-1
+    print("Function Button 6 (GPIO 16) Pressed!")
+
+def function_button_7_action():
+    global octab
+    octab = 10 if octab==10 else octab+1
+    print("Function Button 7 (GPIO 17) Pressed!")
+
+function_actions = [
+    function_button_0_action, function_button_1_action, function_button_2_action, function_button_3_action,
+    function_button_4_action, function_button_5_action, function_button_6_action, function_button_7_action
+]
 
 def work():
     global bt, conn_handle, midi_handle, isConnected
 
     led = Pin('LED', Pin.OUT)
 
-    row_pins = [Pin(0, Pin.OUT), Pin(1, Pin.OUT)]
-    col_pins = [Pin(i, Pin.IN, Pin.PULL_UP) for i in range(10, 22)]
+    key_rows = [Pin(0, Pin.OUT), Pin(1, Pin.OUT)]
+    key_cols = [Pin(i, Pin.IN, Pin.PULL_UP) for i in range(10, 22)]
     
-    num_rows = len(row_pins)
-    num_cols = len(col_pins)
-    
-    key_states = [[True] * num_cols for _ in range(num_rows)]
+    func_row = Pin(9, Pin.OUT)
+    func_cols = [Pin(i, Pin.IN, Pin.PULL_UP) for i in range(10, 18)]
+
+    key_states = [[True] * len(key_cols) for _ in range(len(key_rows))]
+    func_key_states = [True] * len(func_cols)
 
     bt.irq(isrBt)
     bt.active(True)
@@ -112,26 +143,32 @@ def work():
     print("Advertising", midi_handle)
 
     while True:
-        for row_idx, row_pin in enumerate(row_pins):
+        for row_idx, row_pin in enumerate(key_rows):
             row_pin.value(0)
-            for col_idx, col_pin in enumerate(col_pins):
+            for col_idx, col_pin in enumerate(key_cols):
                 current_state = col_pin.value() == 1
                 if current_state != key_states[row_idx][col_idx]:
                     key_states[row_idx][col_idx] = current_state
-                    midi_note = (60 + row_idx * 12) + col_idx
-                    
+                    midi_note = (60 + (row_idx+octab) * 12) + col_idx
                     if not current_state:
-                        print(f"Note On: Octave {row_idx+1}, Note {col_idx} -> MIDI {midi_note}")
                         sendNote(0, midi_note, 100)
                     else:
-                        print(f"Note Off: Octave {row_idx+1}, Note {col_idx} -> MIDI {midi_note}")
                         sendNote(0, midi_note, 0)
             row_pin.value(1)
 
+        func_row.value(0)
+        for col_idx, col_pin in enumerate(func_cols):
+            current_state = col_pin.value() == 1
+            if not func_key_states[col_idx] and current_state:
+                function_actions[col_idx]()
+            func_key_states[col_idx] = current_state
+        func_row.value(1)
+
         led.toggle()
-        time.sleep_ms(10)
+        time.sleep_ms(5)
  
 
 if __name__ == "__main__":
     work()
+
 
